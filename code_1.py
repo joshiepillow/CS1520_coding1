@@ -1,4 +1,6 @@
-import numpy, time, random, multiprocessing, functools, itertools
+import numpy, time, random, multiprocessing, functools, itertools, os
+
+os.environ['PYTHONHASHSEED'] = '0'
 
 def get_shingles(line, k):
     shingles = set()
@@ -6,26 +8,39 @@ def get_shingles(line, k):
         shingles.add(hash(line[i:i+k]))
     return shingles
 
-LIMIT = 4000 # for testing
+LIMIT = 100 # for testing
 
 def read_documents():
     # read in data
     t = time.time()
     with open("documents", "r") as file:
         _, k, q = [int(i) for i in file.readline().split(" ")]
-
-        documents = [] # map from i to the set of shingles of document i
+        documents = []
         
         with multiprocessing.Pool(8) as pool:
             documents = pool.map(functools.partial(get_shingles, k=k), itertools.islice(file, LIMIT), 8)
             
         print("Time taken for document reading: ", time.time() - t)
-
         return q, documents
+
+@functools.cache
+def hash_n(n):
+    random.seed(n)
+    mask = random.getrandbits(64)
+    return lambda x: mask ^ hash(x)
+
+def get_sim_matrix(documents):
+    def inner(n):
+        h = hash_n(n)
+        l = len(documents)
+        lsh = [max([h(x) for x in doc]) for doc in documents]
+        return numpy.fromfunction(lambda i, j: i != j and lsh[i] == lsh[j], (l, l), dtype=bool)
+    return functools.lru_cache()(inner)
 
 if __name__ == '__main__':
     q, documents = read_documents()
-    #print(len(set([x for xs in documents for x in xs]))) #17794797
+    nth_sim_matrix = get_sim_matrix(documents)
+    
 
 # convert to numpy array
 # t = time.time()
