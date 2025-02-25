@@ -1,40 +1,38 @@
-import numpy, time, random
+import numpy, time, random, multiprocessing, functools
 
-# read in data
-t = time.time()
-file = open("documents", "r")
-n, k, q = [int(i) for i in file.readline().split(" ")]
+def get_shingles(line, k):
+    shingles = set()
+    for i in range(len(line) - k + 1):
+        shingles.add(hash(line[i:i+k]))
+    return shingles
 
-shingles = {} # map from k-shingles to N
-documents = [] # map from i to the set of shingles of document i
+def read_documents():
+    # read in data
+    t = time.time()
+    with open("documents", "r") as file:
+        _, k, q = [int(i) for i in file.readline().split(" ")]
 
-for i in range(n):
-    if i % 50 == 0:
-        print(f"Document {i}/{n}. {len(shingles)} distinct shingles", end="\r", flush=True)
-    l = file.readline()
-    documents.append(set())
-    
-    shingle = ""
-    for c in l:
-        if c.isalpha(): # ignore nonalphabetic characters
-            shingle += c
-        if len(shingle) > k: # maintain shingle length
-            shingle = shingle[1:]
-        if len(shingle) == k: 
-            if not shingle in shingles:
-                shingles[shingle] = len(shingles) # map new shingle to next available integer
-            documents[-1].add(shingles[shingle])
+        documents = [] # map from i to the set of shingles of document i
+        
+        with multiprocessing.Pool(4) as pool:
+            documents = pool.map(functools.partial(get_shingles, k=k), file)
+            
+        print("Time taken for document reading: ", time.time() - t)
 
-print("Time taken for document reading: ", time.time() - t)
+        return (q, documents)
+
+if __name__ == '__main__':
+    q, documents = read_documents()
+    #print(len(set([x for xs in documents for x in xs]))) #17794797
 
 # convert to numpy array
-t = time.time()
-doc_array = numpy.zeros((n, len(shingles)))
-for i in range(len(documents)):
-    for n in documents[i]:
-        doc_array[i][n] = 1
+# t = time.time()
+# doc_array = numpy.zeros((n, len(shingles)))
+# for i in range(len(documents)):
+#     for n in documents[i]:
+#         doc_array[i][n] = 1
 
-print("Time taken for array conversion: ", time.time() - t)
+# print("Time taken for array conversion: ", time.time() - t)
 
 # random hashing
 #random_dict = {}
