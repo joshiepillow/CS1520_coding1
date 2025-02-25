@@ -1,25 +1,31 @@
 import numpy, time, random, multiprocessing, functools, itertools, os, sys
 
+# necessary for the hash function to be fixed on different threads.
 os.environ['PYTHONHASHSEED'] = '0'
 
+# String, Int -> List[Int]
+# computes the list of hash values of the k shingles on a given line of input
 def get_shingles(line, k):
     shingles = set()
     for i in range(len(line) - k + 1):
         shingles.add(hash(line[i:i+k]))
     return list(shingles)
 
-LIMIT = 2000000000 # for testing
+# for testing purposes on small sections of the input
+LIMIT = 10**9 
 
+# None -> Int, List[List[Int]]
+# read in the data
 def read_documents():
-    # read in data
     t = time.time()
     with open("documents", "r") as file:
         _, k, q = [int(i) for i in file.readline().split(" ")]
-        documents = []
         
+        # distribute lines in input to different threads to compute shingles faster
+        documents = []
         with multiprocessing.Pool(8) as pool:
             documents = pool.map(functools.partial(get_shingles, k=k), itertools.islice(file, LIMIT), 8)
-            
+
         print(f"Read {len(documents)} in {time.time() - t} time.")
         return q, documents
 
@@ -53,6 +59,7 @@ def main():
     q, documents = read_documents()
     n = len(documents)
     print(f"Max: {max([len(doc) for doc in documents])} Avg: {sum([len(doc) for doc in documents])/n}")
+    print()
 
     relevant_documents = list(documents)
     matrix_iter = next_sim_matrix(relevant_documents)
@@ -61,9 +68,11 @@ def main():
     while True:
         t = time.time()
         new = matrix & next(matrix_iter)
-        i, j = numpy.nonzero(new)
-        count = len(i)
-        relevant = set(i).union(set(j))
+
+        all_i, all_j = numpy.nonzero(new)
+        count = len(all_i)
+
+        relevant = set(all_i).union(set(all_j))
         for index in range(n):
             if not index in relevant:
                 relevant_documents[index] = [0]
@@ -71,16 +80,19 @@ def main():
         print(f"Pairs: {count} Relevant: {len(relevant)} Time: {time.time() - t}")
 
         if count <= q:
-            remainder = matrix ^ new 
-            i_rem, j_rem = numpy.nonzero(remainder)
-            i = list(numpy.append(i, i_rem))
-            j = list(numpy.append(j, j_rem))
+            print()
+            all_i, all_j = numpy.nonzero(matrix)
+            
+            sims = analyze_true_similarity(documents, all_i, all_j)
 
-            analyze_true_similarity(documents, i, j)
+            t = time.time()
+            best = sorted(zip(sims, all_i, all_j), reverse=True)[:q]
+            new_sims, _, _ = zip(*best)
+            print(f"Min: {min(new_sims)} Avg: {sum(new_sims)/len(new_sims)} Time: {time.time() - t}")
 
             with open("lsh_ans", "w") as file:
-                for k in range(q):
-                    file.write(f"{i[k]} {j[k]}\n")
+                for _, i, j in best:
+                    file.write(f"{i} {j}\n")
             break
         else:
             matrix = new
