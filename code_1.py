@@ -1,10 +1,12 @@
-import numpy, time, random, multiprocessing, functools
+import numpy, time, random, multiprocessing, functools, itertools
 
 def get_shingles(line, k):
     shingles = set()
     for i in range(len(line) - k + 1):
         shingles.add(hash(line[i:i+k]))
     return shingles
+
+LIMIT = 4000 # for testing
 
 def read_documents():
     # read in data
@@ -14,12 +16,12 @@ def read_documents():
 
         documents = [] # map from i to the set of shingles of document i
         
-        with multiprocessing.Pool(4) as pool:
-            documents = pool.map(functools.partial(get_shingles, k=k), file)
+        with multiprocessing.Pool(8) as pool:
+            documents = pool.map(functools.partial(get_shingles, k=k), itertools.islice(file, LIMIT), 8)
             
         print("Time taken for document reading: ", time.time() - t)
 
-        return (q, documents)
+        return q, documents
 
 if __name__ == '__main__':
     q, documents = read_documents()
