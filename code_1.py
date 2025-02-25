@@ -1,6 +1,6 @@
 import numpy, time, random, multiprocessing, functools, itertools, os, sys
 
-# necessary for the hash function to be fixed on different threads.
+# necessary for the hash function to return the same outputs on different threads.
 os.environ['PYTHONHASHSEED'] = '0'
 
 # String, Int -> List[Int]
@@ -8,10 +8,12 @@ os.environ['PYTHONHASHSEED'] = '0'
 def get_shingles(line, k):
     shingles = set()
     for i in range(len(line) - k + 1):
-        shingles.add(hash(line[i:i+k]))
+        shingles.add(hash(line[i:i+k])) 
+        # there are a total of ~10^7 unique shingles. the expected number of collisions is (10^7)^2/2^65 << 1. 
+        # on a 32-bit os the expected number of collisions is (10^7)^2/2^33 = ~10^4
     return list(shingles)
 
-# for testing purposes on small sections of the input
+# only for testing purposes to only read a small section of the input
 LIMIT = 10**9 
 
 # None -> Int, List[List[Int]]
@@ -26,45 +28,69 @@ def read_documents():
         with multiprocessing.Pool(8) as pool:
             documents = pool.map(functools.partial(get_shingles, k=k), itertools.islice(file, LIMIT), 8)
 
+        # averages ~20s to read in all of the data
+        # my original naive approach w/o multithreading and using a dictionary to convert from string to int took ~300s
         print(f"Read {len(documents)} in {time.time() - t} time.")
+        print(f"Max: {max([len(doc) for doc in documents])} Avg: {sum([len(doc) for doc in documents])/len(documents)}")
+        print()
         return q, documents
 
+# Int, Int -> Int
+# hashes and applies a mask
+def hash_mask(x, mask):
+    return mask ^ hash(x)
+
+# Int -> Int -> Int
+# returns a hash function dependent on n
+# i tried other hash functions (universal hashing, xxhash, 32-bit hash) but they were all slower
 def hash_n(n):
     random.seed(n)
-    mask = random.getrandbits(64)
-    def inner(x): 
-        return mask ^ hash(x)
-    return inner
+    mask = random.getrandbits(64) # i am on a 64-bit os
+    return functools.partial(hash_mask, mask=mask)
 
+# List[Int], (Int -> Int) -> Int
+# computes a locality-sensitive hash of the set of document shingles
+def compute_lsh(document, h):
+    return max([h(x) for x in document]) # very slow. using numpy arrays actually makes this even slower.
+
+# List[List[Int]] -> Iterator[Array[Bool]]
+# returns an iterator that gives similarity matrices m, where m[i,j] = True iff document i,j hash to the same value
 def next_sim_matrix(documents):
     i = 0
     while True:
         h = hash_n(i)
-        lsh = [max([h(x) for x in doc]) for doc in documents]
+
+        # multithreading barely helps
+        lsh = []
+        with multiprocessing.Pool(8) as pool:
+            lsh = pool.map(functools.partial(compute_lsh, h=h), documents, 16)
+
         yield numpy.array(lsh)[:, numpy.newaxis] == numpy.array(lsh)[numpy.newaxis, :]
         i += 1
 
+# List[List[Int]], Int, Int -> Number
+# computes the exact jaccard similarity of two documents
 def compute_true_similarity(documents, i, j):
     i_set = set(documents[i])
     j_set = set(documents[j])
     return len(i_set.intersection(j_set))/len(i_set.union(j_set))
 
+# List[List[Int]], List[Int], List[Int] -> List[Number]
+# computes the list of true similarities of the document pairs given by all_i and all_j
 def analyze_true_similarity(documents, all_i, all_j):
     t = time.time()
     sims = [compute_true_similarity(documents, i, j) for i, j in zip(all_i, all_j)]
     print(f"Min: {min(sims)} Avg: {sum(sims)/len(sims)} Time: {time.time() - t}")
     return sims
 
-def main():
-    q, documents = read_documents()
+# Int, List[List[Int]] -> None
+# estimates q similar documents based on jaccard similarity
+def find_most_similar(q, documents):
     n = len(documents)
-    print(f"Max: {max([len(doc) for doc in documents])} Avg: {sum([len(doc) for doc in documents])/n}")
-    print()
+    relevant_documents = list(documents) # make a copy of documents that will be changed 
+    matrix_iter = next_sim_matrix(relevant_documents) # get the matrix iterator
+    matrix = numpy.fromfunction(lambda i, j: i < j, (n, n)) # initialize matrix to only consider each pair of distinct documents once
 
-    relevant_documents = list(documents)
-    matrix_iter = next_sim_matrix(relevant_documents)
-    matrix = numpy.fromfunction(lambda i, j: i < j, (n, n))
-    
     while True:
         t = time.time()
         new = matrix & next(matrix_iter)
@@ -72,6 +98,7 @@ def main():
         all_i, all_j = numpy.nonzero(new)
         count = len(all_i)
 
+        # if a document is not in any of the potential pairs we are considering, set its shingles to 0 so that we don't waste computation on its lsh value in the future
         relevant = set(all_i).union(set(all_j))
         for index in range(n):
             if not index in relevant:
@@ -79,14 +106,15 @@ def main():
         
         print(f"Pairs: {count} Relevant: {len(relevant)} Time: {time.time() - t}")
 
-        if count <= q:
+        # if we have narrowed down to less than 200000 pairs, we can manually compute the similarities in ~3m
+        if count <= 200000:
             print()
-            all_i, all_j = numpy.nonzero(matrix)
+            all_i, all_j = numpy.nonzero(new)
             
             sims = analyze_true_similarity(documents, all_i, all_j)
 
             t = time.time()
-            best = sorted(zip(sims, all_i, all_j), reverse=True)[:q]
+            best = sorted(zip(sims, all_i, all_j), reverse=True)[:q] # take the q pairs with highest similarity
             new_sims, _, _ = zip(*best)
             print(f"Min: {min(new_sims)} Avg: {sum(new_sims)/len(new_sims)} Time: {time.time() - t}")
 
@@ -95,24 +123,19 @@ def main():
                     file.write(f"{i} {j}\n")
             break
         else:
+            # otherwise refine the set of potential pairs again in the next iteration with the next hash
             matrix = new
 
-    #num_ands = 1
-    #or_matrices = [next(matrix_iter)]
-    #print(f"Computed first matrix in {time.time() - t} time.")
+def main():
+    q, documents = read_documents()
+    find_most_similar(q, documents)
 
-    #for i in range(1):
-    #    sim_matrix = numpy.logical_or.reduce(or_matrices)
-    #    count = numpy.count_nonzero(sim_matrix) - len(documents)
-
-    #    print(f"Target: {q} Count: {count} ORs: {len(or_matrices)} ANDs: {num_ands}")
-    #    if count > q:
-    #        or_matrices = [a & next(matrix_iter) for a in or_matrices]
-    #        num_ands += 1
-    #    elif count <= q:
-    #        or_matrices += [numpy.logical_and.reduce([next(matrix_iter) for _ in range(num_ands)]) for _ in range(len(or_matrices))]
+    
+    
+    
 
 if __name__ == '__main__':
+    ### a hack i stole from stackoverflow to fix cProfile when multithreading. has no impact on the program when not profiling ###
     import cProfile
     # if check avoids hackery when not profiling
     # Optional; hackery *seems* to work fine even when not profiling, it's just wasteful
