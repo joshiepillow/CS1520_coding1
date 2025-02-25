@@ -42,6 +42,7 @@ def next_sim_matrix(documents):
 
 def main():
     q, documents = read_documents()
+    print(f"Max: {max([len(doc) for doc in documents])} Avg: {sum([len(doc) for doc in documents])/len(documents)}")
 
     t = time.time()
     matrix_iter = next_sim_matrix(documents)
