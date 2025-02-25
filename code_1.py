@@ -6,7 +6,7 @@ def get_shingles(line, k):
     shingles = set()
     for i in range(len(line) - k + 1):
         shingles.add(hash(line[i:i+k]))
-    return shingles
+    return list(shingles)
 
 LIMIT = 2000 # for testing
 
