@@ -1,4 +1,4 @@
-import numpy, time, random, multiprocessing, functools, itertools, os
+import numpy, time, random, multiprocessing, functools, itertools, os, pickle
 
 os.environ['PYTHONHASHSEED'] = '0'
 
@@ -8,7 +8,7 @@ def get_shingles(line, k):
         shingles.add(hash(line[i:i+k]))
     return shingles
 
-LIMIT = 100 # for testing
+LIMIT = 100000000 # for testing
 
 def read_documents():
     # read in data
@@ -20,7 +20,7 @@ def read_documents():
         with multiprocessing.Pool(8) as pool:
             documents = pool.map(functools.partial(get_shingles, k=k), itertools.islice(file, LIMIT), 8)
             
-        print("Time taken for document reading: ", time.time() - t)
+        print(f"Read {len(documents)} in {time.time() - t} time.")
         return q, documents
 
 @functools.cache
@@ -29,34 +29,41 @@ def hash_n(n):
     mask = random.getrandbits(64)
     return lambda x: mask ^ hash(x)
 
-def get_sim_matrix(documents):
-    def inner(n):
-        h = hash_n(n)
-        l = len(documents)
+def next_sim_matrix(documents):
+    i = 0
+    while True:
+        h = hash_n(i)
         lsh = [max([h(x) for x in doc]) for doc in documents]
-        return numpy.fromfunction(lambda i, j: i != j and lsh[i] == lsh[j], (l, l), dtype=bool)
-    return functools.lru_cache()(inner)
+        yield numpy.array(lsh)[:, numpy.newaxis] == numpy.array(lsh)[numpy.newaxis, :]
+        i += 1
 
 if __name__ == '__main__':
-    q, documents = read_documents()
-    nth_sim_matrix = get_sim_matrix(documents)
-    
+    q, documents = 0, []
+    try:
+        t = time.time()
+        with open("cache.pkl", "rb") as file:
+            q, documents = pickle.load(file)
+        print(f"Loaded {len(documents)} documents from pickle file in {time.time() - t} time.")
+    except FileNotFoundError:
+        q, documents = read_documents()
+        t = time.time()
+        with open("cache.pkl", "wb") as file:
+            pickle.dump((q, documents), file)
+        print(f"Wrote {len(documents)} documents to pickle file in {time.time() - t} time.")
 
-# convert to numpy array
-# t = time.time()
-# doc_array = numpy.zeros((n, len(shingles)))
-# for i in range(len(documents)):
-#     for n in documents[i]:
-#         doc_array[i][n] = 1
+    t = time.time()
+    matrix_iter = next_sim_matrix(documents)
+    num_ands = 1
+    or_matrices = [next(matrix_iter)]
+    print(f"Computed first matrix in {time.time() - t} time.")
 
-# print("Time taken for array conversion: ", time.time() - t)
+    for i in range(1):
+        sim_matrix = numpy.logical_or.reduce(or_matrices)
+        count = numpy.count_nonzero(sim_matrix) - len(documents)
 
-# random hashing
-#random_dict = {}
-#def hash_n(n):
-#    r = 0
-#    if n in random_dict:
-#        r = random_dict[n]
-#    else: 
-#        random.seed(n)
-#        r = random_dict[n] = random.getrandbits(32)
+        print(f"Target: {q} Count: {count} ORs: {len(or_matrices)} ANDs: {num_ands}")
+        if count > q:
+            or_matrices = [a & next(matrix_iter) for a in or_matrices]
+            num_ands += 1
+        elif count <= q:
+            or_matrices += [numpy.logical_and.reduce([next(matrix_iter) for _ in range(num_ands)]) for _ in range(len(or_matrices))]
