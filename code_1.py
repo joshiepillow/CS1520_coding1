@@ -120,7 +120,7 @@ def find_most_similar(q, documents):
 
             with open("lsh_ans", "w") as file:
                 for _, i, j in best:
-                    file.write(f"{i} {j}\n")
+                    file.write(f"{i+1} {j+1}\n")
             break
         else:
             # otherwise refine the set of potential pairs again in the next iteration with the next hash
