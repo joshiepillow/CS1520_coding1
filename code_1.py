@@ -38,18 +38,7 @@ def next_sim_matrix(documents):
         i += 1
 
 if __name__ == '__main__':
-    q, documents = 0, []
-    try:
-        t = time.time()
-        with open("cache.pkl", "rb") as file:
-            q, documents = pickle.load(file)
-        print(f"Loaded {len(documents)} documents from pickle file in {time.time() - t} time.")
-    except FileNotFoundError:
-        q, documents = read_documents()
-        t = time.time()
-        with open("cache.pkl", "wb") as file:
-            pickle.dump((q, documents), file)
-        print(f"Wrote {len(documents)} documents to pickle file in {time.time() - t} time.")
+    q, documents = read_documents()
 
     t = time.time()
     matrix_iter = next_sim_matrix(documents)
