@@ -41,7 +41,7 @@ def next_sim_matrix(documents):
 def compute_true_similarity(documents, i, j):
     i_set = set(documents[i])
     j_set = set(documents[j])
-    return i_set.intersection(j_set)/i_set.union(j_set)
+    return len(i_set.intersection(j_set))/len(i_set.union(j_set))
 
 def analyze_true_similarity(documents, all_i, all_j):
     t = time.time()
